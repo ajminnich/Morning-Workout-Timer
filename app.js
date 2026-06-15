@@ -1,34 +1,16 @@
 (() => {
   'use strict';
 
-  const STORE_KEY = 'core-pushup-timer.device-defaults.v1';
+  const STORE_KEY = 'core-pushup-timer.device-defaults.v2';
   const AUDIO_SOURCES = [
     { src: 'assets/alpine-ski-clock-full.mp3', type: 'audio/mpeg' },
     { src: 'assets/alpine-ski-clock-full.m4a', type: 'audio/mp4' },
     { src: 'assets/alpine-ski-clock-full.wav', type: 'audio/wav' }
   ];
-  const ALERT_SOUND_SRC = AUDIO_SOURCES[0].src;
-  const VOICE_CUES = {
-    'front plank': 'assets/voice/front-plank.wav',
-    'abs brace': 'assets/voice/abs-brace.wav',
-    'hand slides': 'assets/voice/hand-slides.wav',
-    'alternating crunch': 'assets/voice/alternating-crunch.wav',
-    'hand to heel': 'assets/voice/hand-to-heel.wav',
-    'hip raises': 'assets/voice/hip-raises.wav',
-    'reverse crunch': 'assets/voice/reverse-crunch.wav',
-    'boat hold': 'assets/voice/boat-hold.wav',
-    'chair sit ups': 'assets/voice/chair-sit-ups.wav',
-    'spider': 'assets/voice/spider.wav',
-    'push ups': 'assets/voice/push-ups.wav',
-    'get ready': 'assets/voice/get-ready.wav',
-    'workout complete': 'assets/voice/workout-complete.wav',
-    'sound ready': 'assets/voice/sound-ready.wav'
-  };
-  // The cropped, noise-reduced clip is just under five seconds. Starting it
-  // slightly early lets the full recorded track play before each interval ends.
-  const ALPINE_COUNTDOWN_TRACK_SECONDS = 4.85;
-  const ALPINE_COUNTDOWN_ARM_SECONDS = 5.2;
-  const POST_COUNTDOWN_SPEECH_DELAY_MS = 1400;
+
+  // The cropped Alpine Ski Clock clip is a little under five seconds. Exact
+  // synchronization is less important than playing the whole sound.
+  const DEFAULT_AUDIO_LEAD_SECONDS = 5.2;
 
   const DEFAULT_WORKOUTS = [
     'Front plank',
@@ -49,9 +31,7 @@
     pushupSeconds: 50,
     prepSeconds: 0,
     alert: 'alpine-ski',
-    voice: true,
-    sound: true,
-    countdown: true
+    sound: true
   };
 
   const els = {
@@ -67,9 +47,7 @@
     skipBtn: document.getElementById('skipBtn'),
     resetBtn: document.getElementById('resetBtn'),
     fullscreenBtn: document.getElementById('fullscreenBtn'),
-    voiceToggle: document.getElementById('voiceToggle'),
     soundToggle: document.getElementById('soundToggle'),
-    countdownToggle: document.getElementById('countdownToggle'),
     testSoundBtn: document.getElementById('testSoundBtn'),
     soundStatus: document.getElementById('soundStatus'),
     alertAudio: document.getElementById('alertAudio'),
@@ -101,18 +79,14 @@
   let pausedRemainingMs = 0;
   let rafId = 0;
   let runToken = 0;
-  let lastCountdownSecond = null;
   let countdownTrackScheduledForEndAt = 0;
   let audioCtx = null;
   let alertSoundBuffer = null;
   let audioAssetsPromise = null;
-  let voiceBuffers = new Map();
-  let voiceAssetsPromise = null;
   let activeAudioSources = new Set();
-  let alertAudioElement = null;
   let activeMediaElements = new Set();
+  let alertAudioElement = null;
   let audioUnlocked = false;
-  let preferredAudioSource = AUDIO_SOURCES[0].src;
   let soundStatusTimer = 0;
   let wakeLock = null;
   let configSourceLabel = 'Built-in defaults';
@@ -165,6 +139,18 @@
       console.warn('Could not load device save:', error);
     }
 
+    // Also understand the older save key, but ignore the removed voice/countdown options.
+    try {
+      const oldStored = JSON.parse(localStorage.getItem('core-pushup-timer.device-defaults.v1') || 'null');
+      if (oldStored && oldStored.config && Array.isArray(oldStored.workouts) && configSourceLabel !== 'Device save') {
+        loadedConfig = { ...loadedConfig, ...normalizeConfig(oldStored.config) };
+        loadedWorkouts = parseWorkoutList(oldStored.workouts.join('\n'));
+        configSourceLabel = 'Device save';
+      }
+    } catch (error) {
+      console.warn('Could not load older device save:', error);
+    }
+
     config = normalizeConfig(loadedConfig);
     workouts = loadedWorkouts.length ? loadedWorkouts : [...DEFAULT_WORKOUTS];
   }
@@ -172,9 +158,7 @@
   function fetchTextFile(path) {
     const sep = path.includes('?') ? '&' : '?';
     return fetch(`${path}${sep}ts=${Date.now()}`, { cache: 'no-store' }).then((response) => {
-      if (!response.ok) {
-        throw new Error(`${path} returned ${response.status}`);
-      }
+      if (!response.ok) throw new Error(`${path} returned ${response.status}`);
       return response.text();
     });
   }
@@ -186,14 +170,9 @@
     els.resetBtn.addEventListener('click', () => resetWorkout(true));
     els.fullscreenBtn.addEventListener('click', toggleFullScreen);
 
-    els.voiceToggle.addEventListener('change', () => {
-      config.voice = els.voiceToggle.checked;
-    });
     els.soundToggle.addEventListener('change', () => {
       config.sound = els.soundToggle.checked;
-    });
-    els.countdownToggle.addEventListener('change', () => {
-      config.countdown = els.countdownToggle.checked;
+      updateSoundStatus(config.sound ? 'ready' : 'off');
     });
 
     els.testSoundBtn.addEventListener('click', testSound);
@@ -216,6 +195,7 @@
 
     els.clearDeviceBtn.addEventListener('click', async () => {
       localStorage.removeItem(STORE_KEY);
+      localStorage.removeItem('core-pushup-timer.device-defaults.v1');
       await loadDefaults();
       applyConfigToUi();
       rebuildWorkout();
@@ -267,7 +247,7 @@
     });
 
     document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible' && (state === 'running' || state === 'cue' || state === 'prep')) {
+      if (document.visibilityState === 'visible' && (state === 'running' || state === 'prep')) {
         requestWakeLock();
       }
     });
@@ -298,13 +278,10 @@
         parsed.prepSeconds = parseDuration(value);
       } else if (['alert', 'soundname', 'tone'].includes(key)) {
         parsed.alert = value || DEFAULT_CONFIG.alert;
-      } else if (['voice', 'announce', 'announcements'].includes(key)) {
-        parsed.voice = parseBoolean(value, DEFAULT_CONFIG.voice);
       } else if (['sound', 'sounds', 'beep', 'beeps'].includes(key)) {
         parsed.sound = parseBoolean(value, DEFAULT_CONFIG.sound);
-      } else if (['countdown', 'countdownbeeps', 'lastseconds'].includes(key)) {
-        parsed.countdown = parseBoolean(value, DEFAULT_CONFIG.countdown);
       }
+      // Deprecated keys such as voice= and countdown= are intentionally ignored.
     });
     return parsed;
   }
@@ -338,22 +315,13 @@
 
     if (raw.includes(':')) {
       const parts = raw.split(':').map((part) => part.trim());
-      if (parts.some((part) => !/^\d+$/.test(part))) {
-        throw new Error(`Invalid duration: ${value}`);
-      }
-      if (parts.length === 2) {
-        return toInt(parts[0], 0) * 60 + toInt(parts[1], 0);
-      }
-      if (parts.length === 3) {
-        return toInt(parts[0], 0) * 3600 + toInt(parts[1], 0) * 60 + toInt(parts[2], 0);
-      }
+      if (parts.some((part) => !/^\d+$/.test(part))) throw new Error(`Invalid duration: ${value}`);
+      if (parts.length === 2) return toInt(parts[0], 0) * 60 + toInt(parts[1], 0);
+      if (parts.length === 3) return toInt(parts[0], 0) * 3600 + toInt(parts[1], 0) * 60 + toInt(parts[2], 0);
       throw new Error(`Invalid duration: ${value}`);
     }
 
-    if (/^\d+$/.test(raw)) {
-      return toInt(raw, 0);
-    }
-
+    if (/^\d+$/.test(raw)) return toInt(raw, 0);
     throw new Error(`Invalid duration: ${value}`);
   }
 
@@ -364,27 +332,21 @@
     next.pushupSeconds = clamp(toInt(next.pushupSeconds, DEFAULT_CONFIG.pushupSeconds), 1, 24 * 60 * 60);
     next.prepSeconds = clamp(toInt(next.prepSeconds, DEFAULT_CONFIG.prepSeconds), 0, 60 * 60);
     next.alert = String(next.alert || DEFAULT_CONFIG.alert);
-    next.voice = Boolean(next.voice);
     next.sound = Boolean(next.sound);
-    next.countdown = Boolean(next.countdown);
     return next;
   }
 
   function readUiIntoConfig() {
     try {
       const nextWorkouts = parseWorkoutList(els.workoutsInput.value);
-      if (!nextWorkouts.length) {
-        throw new Error('Add at least one workout name.');
-      }
+      if (!nextWorkouts.length) throw new Error('Add at least one workout name.');
       config = normalizeConfig({
         ...config,
         reps: toInt(els.repsInput.value, DEFAULT_CONFIG.reps),
         mainSeconds: parseDuration(els.mainTimeInput.value),
         pushupSeconds: parseDuration(els.pushupTimeInput.value),
         prepSeconds: parseDuration(els.prepTimeInput.value || '0'),
-        voice: els.voiceToggle.checked,
-        sound: els.soundToggle.checked,
-        countdown: els.countdownToggle.checked
+        sound: els.soundToggle.checked
       });
       workouts = nextWorkouts;
       applyConfigToUi();
@@ -400,10 +362,9 @@
     els.mainTimeInput.value = formatDurationForInput(config.mainSeconds);
     els.pushupTimeInput.value = formatDurationForInput(config.pushupSeconds);
     els.prepTimeInput.value = formatDurationForInput(config.prepSeconds);
-    els.voiceToggle.checked = config.voice;
     els.soundToggle.checked = config.sound;
-    els.countdownToggle.checked = config.countdown;
     els.workoutsInput.value = workouts.join('\n');
+    updateSoundStatus(config.sound ? 'ready' : 'off');
     updateConfigSource();
   }
 
@@ -411,18 +372,8 @@
     intervals = [];
     for (let i = 0; i < config.reps; i += 1) {
       const workoutName = workouts[i % workouts.length];
-      intervals.push({
-        label: workoutName,
-        type: 'core',
-        round: i + 1,
-        duration: config.mainSeconds
-      });
-      intervals.push({
-        label: 'Push ups',
-        type: 'pushups',
-        round: i + 1,
-        duration: config.pushupSeconds
-      });
+      intervals.push({ label: workoutName, type: 'core', round: i + 1, duration: config.mainSeconds });
+      intervals.push({ label: 'Push ups', type: 'pushups', round: i + 1, duration: config.pushupSeconds });
     }
     renderSchedule();
     renderRoundDots();
@@ -433,30 +384,28 @@
     if (!readUiIntoConfig()) return;
     rebuildWorkout();
     runToken += 1;
+    const token = runToken;
     activeIndex = 0;
     pausedRemainingMs = 0;
-    lastCountdownSecond = null;
     countdownTrackScheduledForEndAt = 0;
     stopActiveAudio();
     await unlockAudio({ quiet: true });
     requestWakeLock();
 
     if (config.prepSeconds > 0) {
-      startPrep(runToken);
+      startPrep(token);
     } else {
-      cueInterval(0, runToken);
+      startInterval(0, token);
     }
   }
 
   function startPrep(token) {
+    if (token !== runToken) return;
     currentInterval = { label: 'Get ready', type: 'prep', round: 0, duration: config.prepSeconds };
-    setState('prep');
-    playAlpineAlert('start');
-    speak('Get ready');
-    startTimedInterval(currentInterval, () => cueInterval(0, token));
+    startTimedInterval(currentInterval, () => startInterval(0, token));
   }
 
-  function cueInterval(index, token) {
+  function startInterval(index, token) {
     if (token !== runToken) return;
     const countdownTrackJustPlayed = Boolean(countdownTrackScheduledForEndAt);
     countdownTrackScheduledForEndAt = 0;
@@ -468,27 +417,13 @@
 
     activeIndex = index;
     currentInterval = intervals[index];
-    durationMs = currentInterval.duration * 1000;
-    lastCountdownSecond = null;
-    setState('cue');
-    updateTimerDisplay(durationMs, 0);
-
-    if (!countdownTrackJustPlayed && !config.countdown) {
-      playAlpineAlert('transition');
-    }
-
-    delay(countdownTrackJustPlayed ? POST_COUNTDOWN_SPEECH_DELAY_MS : 0).then(() => speak(currentInterval.label)).then(() => {
-      if (token !== runToken || state !== 'cue') return;
-      startTimedInterval(currentInterval, () => cueInterval(index + 1, token));
-    });
+    startTimedInterval(currentInterval, () => startInterval(index + 1, token));
   }
 
   function startTimedInterval(interval, onDone) {
     currentInterval = interval;
     durationMs = interval.duration * 1000;
     endAt = performance.now() + durationMs;
-    lastCountdownSecond = null;
-    countdownTrackScheduledForEndAt = 0;
     setState(interval.type === 'prep' ? 'prep' : 'running');
     updateTimerDisplay(durationMs, 0);
     cancelAnimationFrame(rafId);
@@ -498,7 +433,7 @@
       const remainingMs = Math.max(0, endAt - performance.now());
       const progress = durationMs > 0 ? 1 - remainingMs / durationMs : 1;
       updateTimerDisplay(remainingMs, progress);
-      maybeCountdownBeep(remainingMs);
+      maybeCountdownSound(remainingMs);
 
       if (remainingMs <= 0) {
         cancelAnimationFrame(rafId);
@@ -519,7 +454,6 @@
       rafId = 0;
       stopActiveAudio();
       countdownTrackScheduledForEndAt = 0;
-      lastCountdownSecond = null;
       setState('paused');
       releaseWakeLock();
       return;
@@ -527,15 +461,13 @@
 
     if (state === 'paused' && currentInterval) {
       endAt = performance.now() + pausedRemainingMs;
-      countdownTrackScheduledForEndAt = 0;
-      lastCountdownSecond = null;
       setState(currentInterval.type === 'prep' ? 'prep' : 'running');
       requestWakeLock();
-      startTimedIntervalFromPause();
+      resumeTimedInterval();
     }
   }
 
-  function startTimedIntervalFromPause() {
+  function resumeTimedInterval() {
     cancelAnimationFrame(rafId);
 
     const tick = () => {
@@ -543,15 +475,15 @@
       const remainingMs = Math.max(0, endAt - performance.now());
       const progress = durationMs > 0 ? 1 - remainingMs / durationMs : 1;
       updateTimerDisplay(remainingMs, progress);
-      maybeCountdownBeep(remainingMs);
+      maybeCountdownSound(remainingMs);
 
       if (remainingMs <= 0) {
         cancelAnimationFrame(rafId);
         rafId = 0;
         if (currentInterval.type === 'prep') {
-          cueInterval(0, runToken);
+          startInterval(0, runToken);
         } else {
-          cueInterval(activeIndex + 1, runToken);
+          startInterval(activeIndex + 1, runToken);
         }
       } else {
         rafId = requestAnimationFrame(tick);
@@ -562,29 +494,26 @@
   }
 
   function skipInterval() {
-    if (!['running', 'paused', 'cue', 'prep'].includes(state)) return;
+    if (!['running', 'paused', 'prep'].includes(state)) return;
     runToken += 1;
     const token = runToken;
     cancelAnimationFrame(rafId);
-    window.speechSynthesis && window.speechSynthesis.cancel();
+    rafId = 0;
     stopActiveAudio();
     countdownTrackScheduledForEndAt = 0;
-    lastCountdownSecond = null;
 
     if (currentInterval && currentInterval.type === 'prep') {
-      cueInterval(0, token);
+      startInterval(0, token);
       return;
     }
 
-    const nextIndex = state === 'cue' ? activeIndex + 1 : activeIndex + 1;
-    cueInterval(nextIndex, token);
+    startInterval(activeIndex + 1, token);
   }
 
   function resetWorkout(announce) {
     runToken += 1;
     cancelAnimationFrame(rafId);
     rafId = 0;
-    if ('speechSynthesis' in window) window.speechSynthesis.cancel();
     stopActiveAudio();
     releaseWakeLock();
     state = 'ready';
@@ -592,11 +521,10 @@
     currentInterval = intervals[0] || null;
     pausedRemainingMs = 0;
     durationMs = currentInterval ? currentInterval.duration * 1000 : config.mainSeconds * 1000;
-    lastCountdownSecond = null;
     countdownTrackScheduledForEndAt = 0;
     setState('ready');
     updateTimerDisplay(durationMs, 0);
-    if (announce) playAlpineAlert('reset');
+    if (announce && config.sound) playAlpineTrack('reset');
   }
 
   function completeWorkout(countdownTrackJustPlayed = Boolean(countdownTrackScheduledForEndAt)) {
@@ -612,10 +540,7 @@
     els.progressBar.style.width = '100%';
     renderRoundDots(true);
     countdownTrackScheduledForEndAt = 0;
-    if (!countdownTrackJustPlayed) {
-      playAlpineAlert('complete');
-    }
-    delay(countdownTrackJustPlayed ? POST_COUNTDOWN_SPEECH_DELAY_MS : 0).then(() => speak('Workout complete'));
+    if (config.sound && !countdownTrackJustPlayed) playAlpineTrack('complete');
   }
 
   function setState(nextState) {
@@ -623,7 +548,7 @@
     document.body.classList.toggle('running', state === 'running' && currentInterval && currentInterval.type === 'core');
     document.body.classList.toggle('pushups', state === 'running' && currentInterval && currentInterval.type === 'pushups');
 
-    const isInteractive = ['running', 'paused', 'cue', 'prep'].includes(state);
+    const isInteractive = ['running', 'paused', 'prep'].includes(state);
     els.startBtn.disabled = isInteractive;
     els.pauseBtn.disabled = !(state === 'running' || state === 'prep' || state === 'paused');
     els.skipBtn.disabled = !isInteractive;
@@ -635,12 +560,6 @@
       els.roundText.textContent = `Round 1 of ${config.reps}`;
       els.activeName.textContent = intervals[0] ? intervals[0].label : 'Front plank';
       els.nextName.textContent = intervals[1] ? `Next: ${intervals[1].label}` : 'Next: Push ups';
-    } else if (state === 'cue') {
-      els.phasePill.textContent = 'Get ready';
-      els.phasePill.className = 'phase-pill cue';
-      els.roundText.textContent = `Round ${currentInterval.round} of ${config.reps}`;
-      els.activeName.textContent = currentInterval.label;
-      els.nextName.textContent = currentInterval.type === 'pushups' ? 'Push up set' : 'Core set';
     } else if (state === 'prep') {
       els.phasePill.textContent = 'Prep';
       els.phasePill.className = 'phase-pill cue';
@@ -676,9 +595,7 @@
 
   function getNextText() {
     if (!currentInterval) return '';
-    if (currentInterval.type === 'prep') {
-      return intervals[0] ? `Next: ${intervals[0].label}` : '';
-    }
+    if (currentInterval.type === 'prep') return intervals[0] ? `Next: ${intervals[0].label}` : '';
     const next = intervals[activeIndex + 1];
     return next ? `Next: ${next.label}` : 'Final interval';
   }
@@ -693,7 +610,7 @@
       dot.className = 'round-dot';
       dot.setAttribute('aria-label', `Round ${i}`);
       if (i <= completedRounds) dot.classList.add('done');
-      if (!forceDone && ['running', 'paused', 'cue'].includes(state) && i === currentRound) dot.classList.add('current');
+      if (!forceDone && ['running', 'paused'].includes(state) && i === currentRound) dot.classList.add('current');
       els.roundDots.appendChild(dot);
     }
   }
@@ -718,23 +635,29 @@
     els.totalTime.textContent = `${formatDurationForInput(totalSeconds)} total`;
   }
 
-  function maybeCountdownBeep(remainingMs) {
-    if (!config.countdown || !config.sound || state !== 'running') return;
+  function maybeCountdownSound(remainingMs) {
+    if (!config.sound || state !== 'running') return;
     if (countdownTrackScheduledForEndAt) return;
 
     const leadMs = getAlpineTrackLeadMs();
-    if (durationMs >= 1000 && remainingMs <= leadMs) {
-      if (scheduleAlpineCountdownTrack(remainingMs)) {
-        lastCountdownSecond = 'track';
+    if (remainingMs <= leadMs) {
+      if (playAlpineTrack('countdown')) {
+        countdownTrackScheduledForEndAt = endAt || (performance.now() + remainingMs);
+        updateSoundStatus('Alpine sound playing.', 'ready', 2500);
+        vibrate([25, 975, 25, 975, 25, 975, 90]);
       }
     }
   }
 
   function getAlpineTrackLeadMs() {
+    const media = alertAudioElement || els.alertAudio;
+    if (media && Number.isFinite(media.duration) && media.duration > 0) {
+      return Math.ceil((media.duration + 0.25) * 1000);
+    }
     if (alertSoundBuffer && Number.isFinite(alertSoundBuffer.duration) && alertSoundBuffer.duration > 0) {
       return Math.ceil((alertSoundBuffer.duration + 0.25) * 1000);
     }
-    return Math.ceil(ALPINE_COUNTDOWN_ARM_SECONDS * 1000);
+    return Math.ceil(DEFAULT_AUDIO_LEAD_SECONDS * 1000);
   }
 
   async function testSound() {
@@ -742,21 +665,21 @@
       config.sound = true;
       els.soundToggle.checked = true;
     }
-    if (!config.voice) {
-      config.voice = true;
-      els.voiceToggle.checked = true;
-    }
 
-    updateSoundStatus('Enabling audio and voice...', 'warning');
-    await unlockAudio({ quiet: true, loadVoice: true });
+    updateSoundStatus('enabling audio...', 'warning');
+    await unlockAudio({ quiet: true });
 
-    await speak('Sound ready');
-    await delay(200);
-
-    const played = playAlertWithWebAudio('test') || await playFullAlpineTrack('test', { waitForStart: true });
+    const played = await playAlpineTrack('test', { waitForStart: true });
     if (played) {
       audioUnlocked = true;
-      updateSoundStatus('Voice and Alpine sound test started.', 'ready', 3500);
+      updateSoundStatus('Alpine sound test playing.', 'ready', 3500);
+      return;
+    }
+
+    const fallbackPlayed = playAlertWithWebAudio('test');
+    if (fallbackPlayed) {
+      audioUnlocked = true;
+      updateSoundStatus('Alpine sound test playing with fallback.', 'ready', 3500);
     } else {
       updateSoundStatus('iPad blocked sound. Check volume/output, then tap again.', 'error');
     }
@@ -764,42 +687,36 @@
 
   async function unlockAudio(options = {}) {
     const quiet = options.quiet !== false;
-    primeAudioElement();
+    const audio = primeAudioElement();
 
     try {
       await warmWebAudio();
-      const loading = [loadAudioAssets()];
-      if (options.loadVoice !== false) loading.push(loadVoiceAssets());
-      const results = await Promise.allSettled(loading);
-      const rejected = results.filter((result) => result.status === 'rejected');
-      if (rejected.length) {
-        console.info('Some audio assets could not be decoded:', rejected.map((result) => result.reason && (result.reason.message || result.reason)).join('; '));
-      }
+      await loadAudioAssets();
     } catch (error) {
-      console.info('Web Audio could not be warmed up:', error.message || error);
+      console.info('Audio assets could not be warmed up:', error.message || error);
     }
 
-    if (!quiet) {
-      const played = await playFullAlpineTrack('test', { waitForStart: true });
-      if (!played && audioCtx && alertSoundBuffer) {
-        const fallbackPlayed = playAudioBuffer(alertSoundBuffer, 1);
-        if (fallbackPlayed) {
-          audioUnlocked = true;
-          updateSoundStatus('Sound test started with Web Audio.', 'ready');
-          return true;
-        }
+    if (!quiet) return playAlpineTrack('test', { waitForStart: true });
+
+    // This muted play/pause is safe and helps some mobile browsers prepare the
+    // audio element after a Start/Test tap. The real test button still plays the sound.
+    if (audio && !audioUnlocked) {
+      try {
+        audio.muted = true;
+        audio.currentTime = 0;
+        const result = audio.play();
+        if (result && typeof result.then === 'function') await result;
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+        audioUnlocked = true;
+      } catch (error) {
+        try { audio.muted = false; } catch (_) {}
       }
-      return played;
     }
 
-    if (audioCtx && audioCtx.state === 'running') {
-      audioUnlocked = true;
-      updateSoundStatus('Sound armed. Tap Enable / Test Sound if iPad stays silent.', 'ready', 3500);
-      return true;
-    }
-
-    updateSoundStatus('Tap Enable / Test Sound once on iPad if alerts stay silent.', 'warning');
-    return false;
+    updateSoundStatus(audioUnlocked ? 'ready' : 'tap Enable / Test Sound on iPad', audioUnlocked ? 'ready' : 'warning', 3500);
+    return audioUnlocked;
   }
 
   async function warmWebAudio() {
@@ -808,16 +725,11 @@
     if (!audioCtx) audioCtx = new Ctx();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
 
-    // iOS Safari often needs a tiny source started from a user tap before later audio will render.
     const buffer = audioCtx.createBuffer(1, 1, 22050);
     const source = audioCtx.createBufferSource();
     source.buffer = buffer;
     source.connect(audioCtx.destination);
-    try {
-      source.start(0);
-    } catch (error) {
-      // A source can only be started once; ignore warmup failures.
-    }
+    try { source.start(0); } catch (error) {}
     return audioCtx.state === 'running';
   }
 
@@ -832,8 +744,6 @@
         try {
           const buffer = await loadAudioBuffer(source.src);
           alertSoundBuffer = buffer;
-          preferredAudioSource = source.src;
-          setMediaAudioSource(source.src);
           return true;
         } catch (error) {
           errors.push(`${source.src}: ${error.message || error}`);
@@ -855,79 +765,88 @@
     return audioCtx.decodeAudioData(arrayBuffer);
   }
 
-  function loadVoiceAssets() {
-    if (!audioCtx) return Promise.resolve(false);
-    if (voiceBuffers.size > 0) return Promise.resolve(true);
-    if (voiceAssetsPromise) return voiceAssetsPromise;
-
-    voiceAssetsPromise = Promise.allSettled(Object.entries(VOICE_CUES).map(async ([key, src]) => {
-      const buffer = await loadAudioBuffer(src);
-      voiceBuffers.set(key, buffer);
-    })).then((results) => {
-      const failed = results.filter((result) => result.status === 'rejected');
-      if (failed.length) {
-        console.info('Some recorded voice cues could not be loaded:', failed.map((result) => result.reason && (result.reason.message || result.reason)).join('; '));
+  function primeAudioElement() {
+    if (!alertAudioElement) {
+      alertAudioElement = els.alertAudio || new Audio();
+      alertAudioElement.preload = 'auto';
+      alertAudioElement.setAttribute('playsinline', '');
+      alertAudioElement.setAttribute('webkit-playsinline', '');
+      if (!els.alertAudio) {
+        setMediaAudioSource(AUDIO_SOURCES[0].src);
       }
-      return voiceBuffers.size > 0;
-    }).catch((error) => {
-      voiceAssetsPromise = null;
-      throw error;
-    });
+    }
 
-    return voiceAssetsPromise;
+    try { alertAudioElement.load(); } catch (error) {}
+    return alertAudioElement;
   }
 
-  function playAlpineAlert(kind) {
-    if (!config.sound) return;
-    const played = playAlertWithWebAudio(kind);
-    if (!played) playFullAlpineTrack(kind);
-    vibrate(kind === 'complete' ? [80, 60, 120] : [45]);
+  function setMediaAudioSource(src) {
+    const audio = alertAudioElement || els.alertAudio;
+    if (!audio || !src) return;
+    const absolute = new URL(src, window.location.href).href;
+    if (audio.src !== absolute && audio.currentSrc !== absolute) {
+      audio.src = src;
+      try { audio.load(); } catch (error) {}
+    }
+  }
+
+  function playAlpineTrack(kind, options = {}) {
+    if (!config.sound && kind !== 'test') return false;
+    const audio = primeAudioElement();
+    if (!audio) return false;
+
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      try { audio.volume = 1; } catch (error) {}
+      activeMediaElements.add(audio);
+      audio.onended = () => {
+        activeMediaElements.delete(audio);
+        if (kind === 'test') updateSoundStatus('sound test finished.', 'ready', 2500);
+      };
+
+      const result = audio.play();
+      if (result && typeof result.then === 'function') {
+        if (options.waitForStart) {
+          return result.then(() => {
+            audioUnlocked = true;
+            updateSoundStatus(kind === 'test' ? 'sound test playing.' : 'Alpine sound playing.', 'ready', 3000);
+            return true;
+          }).catch((error) => {
+            activeMediaElements.delete(audio);
+            updateSoundStatus('sound was blocked. Check volume/output, then tap Test Sound again.', 'error');
+            console.info('Audio file could not play:', error.message || error);
+            return false;
+          });
+        }
+
+        result.then(() => {
+          audioUnlocked = true;
+          updateSoundStatus('Alpine sound playing.', 'ready', 2500);
+        }).catch((error) => {
+          activeMediaElements.delete(audio);
+          updateSoundStatus('iPad blocked sound. Tap Enable / Test Sound once.', 'error');
+          console.info('Audio file could not play:', error.message || error);
+        });
+      } else {
+        audioUnlocked = true;
+        updateSoundStatus(kind === 'test' ? 'sound test playing.' : 'Alpine sound playing.', 'ready', 2500);
+      }
+      return true;
+    } catch (error) {
+      activeMediaElements.delete(audio);
+      updateSoundStatus('sound could not start. Check volume/output, then tap Test Sound.', 'error');
+      console.info('Audio file could not start:', error.message || error);
+      return false;
+    }
   }
 
   function playAlertWithWebAudio(kind, when = null) {
+    if (!config.sound && kind !== 'test') return false;
     if (!audioCtx || !alertSoundBuffer) return false;
-    if (audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
-    }
-    const volume = kind === 'countdown' || kind === 'complete' || kind === 'test' ? 1 : 0.9;
-    return playAudioBuffer(alertSoundBuffer, volume, when);
-  }
-
-  function scheduleAlpineCountdownTrack(remainingMs) {
-    if (!config.sound) return false;
-
-    let played = false;
-    const secondsUntilEnd = Math.max(0, remainingMs / 1000);
-
-    if (audioCtx && audioCtx.state === 'suspended') {
-      audioCtx.resume().catch(() => {});
-    }
-
-    if (audioCtx && audioCtx.state === 'running' && alertSoundBuffer) {
-      const trackSeconds = alertSoundBuffer.duration || ALPINE_COUNTDOWN_TRACK_SECONDS;
-      const scheduledStartTime = audioCtx.currentTime + Math.max(0, secondsUntilEnd - trackSeconds);
-      played = playAlertWithWebAudio('countdown', scheduledStartTime);
-    }
-
-    if (!played) {
-      played = playFullAlpineTrack('countdown');
-    }
-
-    if (!played) {
-      updateSoundStatus('Sound was blocked. Tap Enable / Test Sound, then Start again.', 'error');
-      return false;
-    }
-
-    countdownTrackScheduledForEndAt = endAt || (performance.now() + remainingMs);
-    updateSoundStatus('Full Alpine countdown playing.', 'ready', 2500);
-    vibrate([25, 975, 25, 975, 25, 975, 90]);
-    return true;
-  }
-
-  function playCountdownBeep(seconds) {
-    if (!config.sound) return;
-    playFullAlpineTrack('countdown');
-    vibrate(seconds === 1 ? [90] : [25]);
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return playAudioBuffer(alertSoundBuffer, 1, when);
   }
 
   function playAudioBuffer(buffer, volume, when = null) {
@@ -952,11 +871,7 @@
 
   function stopActiveAudio() {
     activeAudioSources.forEach((source) => {
-      try {
-        source.stop(0);
-      } catch (error) {
-        // Source already stopped.
-      }
+      try { source.stop(0); } catch (error) {}
     });
     activeAudioSources.clear();
 
@@ -964,97 +879,9 @@
       try {
         media.pause();
         media.currentTime = 0;
-      } catch (error) {
-        // Media element may not be seekable yet.
-      }
+      } catch (error) {}
     });
     activeMediaElements.clear();
-  }
-
-  function primeAudioElement() {
-    if (!alertAudioElement) {
-      alertAudioElement = els.alertAudio || new Audio();
-      alertAudioElement.preload = 'auto';
-      alertAudioElement.setAttribute('playsinline', '');
-      alertAudioElement.setAttribute('webkit-playsinline', '');
-      if (!els.alertAudio) {
-        setMediaAudioSource(preferredAudioSource);
-      }
-    }
-
-    if (!alertAudioElement.currentSrc && !alertAudioElement.src) {
-      setMediaAudioSource(preferredAudioSource);
-    }
-
-    try {
-      alertAudioElement.load();
-    } catch (error) {
-      // Some browsers defer loading until play().
-    }
-    return alertAudioElement;
-  }
-
-  function setMediaAudioSource(src) {
-    preferredAudioSource = src || preferredAudioSource || ALERT_SOUND_SRC;
-    const audio = alertAudioElement || els.alertAudio;
-    if (!audio) return;
-
-    const absolute = new URL(preferredAudioSource, window.location.href).href;
-    if (audio.src !== absolute && audio.currentSrc !== absolute) {
-      audio.src = preferredAudioSource;
-      try {
-        audio.load();
-      } catch (error) {
-        // Loading may be delayed until play().
-      }
-    }
-  }
-
-  async function playFullAlpineTrack(kind, options = {}) {
-    const audio = primeAudioElement();
-    if (!audio) return false;
-
-    try {
-      audio.pause();
-      audio.currentTime = 0;
-      audio.muted = false;
-      try {
-        audio.volume = 1;
-      } catch (error) {
-        // iOS may ignore programmatic volume changes.
-      }
-      activeMediaElements.add(audio);
-      audio.onended = () => {
-        activeMediaElements.delete(audio);
-        if (kind === 'test') updateSoundStatus('Sound test finished.', 'ready', 2500);
-      };
-      const result = audio.play();
-      if (result && typeof result.then === 'function') {
-        if (options.waitForStart) {
-          await result;
-          audioUnlocked = true;
-          updateSoundStatus(kind === 'test' ? 'Sound test playing.' : 'Full Alpine sound playing.', 'ready', 3000);
-        } else {
-          result.then(() => {
-            audioUnlocked = true;
-            updateSoundStatus(kind === 'countdown' ? 'Full Alpine countdown playing.' : 'Full Alpine sound playing.', 'ready', 2500);
-          }).catch((error) => {
-            activeMediaElements.delete(audio);
-            updateSoundStatus('iPad blocked the sound. Tap Enable / Test Sound once.', 'error');
-            console.info('Audio file could not play:', error.message || error);
-          });
-        }
-      } else {
-        audioUnlocked = true;
-        updateSoundStatus(kind === 'test' ? 'Sound test playing.' : 'Full Alpine sound playing.', 'ready', 2500);
-      }
-      return true;
-    } catch (error) {
-      activeMediaElements.delete(audio);
-      updateSoundStatus('Sound could not start. Check iPad volume/output, then tap Test Sound.', 'error');
-      console.info('Audio file could not start:', error.message || error);
-      return false;
-    }
   }
 
   function updateSoundStatus(message, level = '', clearAfterMs = 0) {
@@ -1065,116 +892,22 @@
     if (clearAfterMs > 0) {
       soundStatusTimer = window.setTimeout(() => {
         if (!els.soundStatus) return;
-        els.soundStatus.textContent = audioUnlocked
-          ? 'Sound: ready'
-          : 'Sound: tap Enable / Test Sound on iPad';
-        els.soundStatus.className = audioUnlocked ? 'sound-status ready' : 'sound-status warning';
+        if (!config.sound) {
+          els.soundStatus.textContent = 'Sound: off';
+          els.soundStatus.className = 'sound-status';
+        } else {
+          els.soundStatus.textContent = audioUnlocked ? 'Sound: ready' : 'Sound: tap Enable / Test Sound on iPad';
+          els.soundStatus.className = audioUnlocked ? 'sound-status ready' : 'sound-status warning';
+        }
       }, clearAfterMs);
     }
-  }
-
-  async function speak(text) {
-    if (!config.voice) {
-      return delay(650);
-    }
-
-    const recorded = await playRecordedVoiceCue(text);
-    if (recorded) {
-      return;
-    }
-
-    return speakWithBrowserVoice(text);
-  }
-
-  async function playRecordedVoiceCue(text) {
-    if (!audioCtx) return null;
-
-    try {
-      if (audioCtx.state === 'suspended') {
-        await audioCtx.resume();
-      }
-      if (!voiceBuffers.size) {
-        await loadVoiceAssets();
-      }
-    } catch (error) {
-      console.info('Recorded voice unavailable:', error.message || error);
-      return null;
-    }
-
-    const key = normalizeVoiceKey(text);
-    const buffer = voiceBuffers.get(key);
-    if (!buffer) return null;
-
-    return new Promise((resolve) => {
-      try {
-        const source = audioCtx.createBufferSource();
-        const gain = audioCtx.createGain();
-        const startTime = Math.max(audioCtx.currentTime + 0.003, audioCtx.currentTime);
-        source.buffer = buffer;
-        gain.gain.setValueAtTime(1, startTime);
-        source.connect(gain).connect(audioCtx.destination);
-        activeAudioSources.add(source);
-        source.onended = () => {
-          activeAudioSources.delete(source);
-          resolve(true);
-        };
-        source.start(startTime);
-        audioUnlocked = true;
-        const fallbackMs = Math.max(600, Math.ceil((buffer.duration + 0.15) * 1000));
-        window.setTimeout(() => resolve(true), fallbackMs);
-      } catch (error) {
-        console.info('Recorded voice playback failed:', error.message || error);
-        resolve(null);
-      }
-    });
-  }
-
-  function normalizeVoiceKey(text) {
-    return String(text || '')
-      .trim()
-      .toLowerCase()
-      .replace(/[-_]+/g, ' ')
-      .replace(/[^a-z0-9 ]+/g, '')
-      .replace(/\s+/g, ' ');
-  }
-
-  function speakWithBrowserVoice(text) {
-    if (!('speechSynthesis' in window)) {
-      return delay(650);
-    }
-
-    return new Promise((resolve) => {
-      let done = false;
-      const finish = () => {
-        if (done) return;
-        done = true;
-        resolve();
-      };
-
-      try {
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = 0.95;
-        utterance.pitch = 1;
-        utterance.volume = 1;
-        utterance.onend = finish;
-        utterance.onerror = finish;
-        window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utterance);
-        window.setTimeout(finish, Math.max(1300, Math.min(2600, text.length * 80)));
-      } catch (error) {
-        console.warn('Speech failed:', error);
-        finish();
-      }
-    });
   }
 
   async function requestWakeLock() {
     if (!('wakeLock' in navigator) || document.visibilityState !== 'visible') return;
     try {
       wakeLock = await navigator.wakeLock.request('screen');
-      wakeLock.addEventListener('release', () => {
-        wakeLock = null;
-      });
+      wakeLock.addEventListener('release', () => { wakeLock = null; });
     } catch (error) {
       wakeLock = null;
     }
@@ -1206,9 +939,7 @@
 
     const request = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
     if (request) {
-      request.call(docEl).catch(() => {
-        document.body.classList.toggle('fullscreen-ui');
-      });
+      request.call(docEl).catch(() => { document.body.classList.toggle('fullscreen-ui'); });
     } else {
       document.body.classList.toggle('fullscreen-ui');
     }
@@ -1236,9 +967,7 @@
       `pushup_set=${formatDurationForInput(input.pushupSeconds)}`,
       `prep=${formatDurationForInput(input.prepSeconds)}`,
       `alert=${input.alert || 'alpine-ski'}`,
-      `voice=${input.voice ? 'true' : 'false'}`,
       `sound=${input.sound ? 'true' : 'false'}`,
-      `countdown=${input.countdown ? 'true' : 'false'}`,
       ''
     ].join('\n');
   }
@@ -1273,9 +1002,7 @@
     const hours = Math.floor(totalSeconds / 3600);
     const minutes = Math.floor((totalSeconds % 3600) / 60);
     const seconds = totalSeconds % 60;
-    if (hours > 0) {
-      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
-    }
+    if (hours > 0) return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     return `${minutes}:${String(seconds).padStart(2, '0')}`;
   }
 
@@ -1295,13 +1022,7 @@
     return Math.min(max, Math.max(min, value));
   }
 
-  function delay(ms) {
-    return new Promise((resolve) => window.setTimeout(resolve, ms));
-  }
-
   function vibrate(pattern) {
-    if ('vibrate' in navigator) {
-      navigator.vibrate(pattern);
-    }
+    if ('vibrate' in navigator) navigator.vibrate(pattern);
   }
 })();

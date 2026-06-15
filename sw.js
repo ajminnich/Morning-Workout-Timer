@@ -1,4 +1,4 @@
-const CACHE_NAME = 'core-pushup-timer-v8';
+const CACHE_NAME = 'core-pushup-timer-v9';
 const APP_SHELL = [
   './',
   './index.html',
@@ -11,20 +11,6 @@ const APP_SHELL = [
   './assets/alpine-ski-clock-full.mp3',
   './assets/alpine-ski-clock-full.m4a',
   './assets/alpine-ski-clock-full.wav',
-  './assets/voice/front-plank.wav',
-  './assets/voice/abs-brace.wav',
-  './assets/voice/hand-slides.wav',
-  './assets/voice/alternating-crunch.wav',
-  './assets/voice/hand-to-heel.wav',
-  './assets/voice/hip-raises.wav',
-  './assets/voice/reverse-crunch.wav',
-  './assets/voice/boat-hold.wav',
-  './assets/voice/chair-sit-ups.wav',
-  './assets/voice/spider.wav',
-  './assets/voice/push-ups.wav',
-  './assets/voice/get-ready.wav',
-  './assets/voice/workout-complete.wav',
-  './assets/voice/sound-ready.wav',
   './config/timer.txt',
   './config/workouts.txt'
 ];

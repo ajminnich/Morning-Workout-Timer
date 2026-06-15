@@ -7,6 +7,4 @@ main_set=1:15
 pushup_set=0:50
 prep=0:00
 alert=alpine-ski
-voice=true
 sound=true
-countdown=true

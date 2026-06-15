@@ -51,18 +51,10 @@
 
         <div class="quick-settings" aria-label="Audio options">
           <label class="switch-line">
-            <input id="voiceToggle" type="checkbox" checked>
-            <span>Voice names</span>
-          </label>
-          <label class="switch-line">
             <input id="soundToggle" type="checkbox" checked>
-            <span>Alpine Ski alert</span>
+            <span>Alpine Ski sound effect</span>
           </label>
-          <label class="switch-line">
-            <input id="countdownToggle" type="checkbox" checked>
-            <span>Full Alpine countdown</span>
-          </label>
-          <button id="testSoundBtn" class="sound-test-button" type="button">Enable / Test Sound + Voice</button>
+          <button id="testSoundBtn" class="sound-test-button" type="button">Enable / Test Sound</button>
           <p id="soundStatus" class="sound-status" aria-live="polite">Sound: ready to enable</p>
           <audio id="alertAudio" preload="auto" playsinline>
             <source src="assets/alpine-ski-clock-full.mp3" type="audio/mpeg">
