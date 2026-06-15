@@ -8,7 +8,7 @@
   // Arm it early, then start it so the fourth beep lands on the interval change.
   const ALPINE_COUNTDOWN_FINAL_BEEP_AT_SECONDS = 3.0;
   const ALPINE_COUNTDOWN_ARM_SECONDS = 4.05;
-  const POST_COUNTDOWN_SPEECH_DELAY_MS = 550;
+  const POST_COUNTDOWN_SPEECH_DELAY_MS = 50; //550
 
   const DEFAULT_WORKOUTS = [
     'Front plank',
