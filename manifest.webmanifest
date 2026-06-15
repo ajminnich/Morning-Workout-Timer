@@ -1,7 +1,7 @@
 {
-  "name": "Core + Push-up Tabata Timer",
+  "name": "Core + Push Up Tabata Timer",
   "short_name": "Core Timer",
-  "description": "A configurable core workout and push-up interval timer with voice announcements and Alpine Ski-style alerts.",
+  "description": "A configurable core workout and push up interval timer with voice announcements and a cleaned Alpine Ski Clock alert.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

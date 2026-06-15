@@ -1,4 +1,4 @@
-const CACHE_NAME = 'core-pushup-timer-v1';
+const CACHE_NAME = 'core-pushup-timer-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -8,6 +8,8 @@ const APP_SHELL = [
   './assets/icon.svg',
   './assets/icon-192.png',
   './assets/icon-512.png',
+  './assets/alpine-ski-beep-clean.m4a',
+  './assets/alpine-ski-clock-clean.m4a',
   './config/timer.txt',
   './config/workouts.txt'
 ];

@@ -1,4 +1,4 @@
-# Core + Push-up Timer defaults
+# Core + Push Up Timer defaults
 # Edit this file, then reload the web app.
 # Durations may be seconds, m:ss, or h:mm:ss.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Start a local web server for the Core + Push-up Timer."""
+"""Start a local web server for the Core + Push Up Timer."""
 from __future__ import annotations
 
 import http.server

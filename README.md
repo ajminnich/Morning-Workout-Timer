@@ -1,11 +1,11 @@
-# Core + Push-up Tabata Timer
+# Core + Push Up Tabata Timer
 
 This is a self-contained web app for an interval workout that alternates:
 
 1. One core exercise
-2. One push-up interval
+2. One push up interval
 
-The default workout has 10 rounds, a 1:15 core interval, and a 0:50 push-up interval. Before each interval, the app speaks the exercise name. Push-up intervals are announced as "Push-ups". The transition sound is a synthesized Alpine Ski-style clock alert, so there are no copied audio assets.
+The default workout has 10 rounds, a 1:15 core interval, and a 0:50 push up interval. Before each interval, the app speaks the exercise name. Push up intervals are announced as "Push ups". The beep/alert sound uses the cleaned Alpine Ski Clock audio provided for this version. The audio was noise-reduced, trimmed, and reassembled so the beeps land on whole-second marks.
 
 ## Files
 
@@ -24,6 +24,8 @@ core-pushup-timer/
     icon.svg
     icon-192.png
     icon-512.png
+    alpine-ski-beep-clean.m4a
+    alpine-ski-clock-clean.m4a
 ```
 
 ## Edit the safe local text files
@@ -69,7 +71,7 @@ http://localhost:8000
 
 ## Run on iPad or iPhone
 
-The most reliable iPad setup is to serve the folder from a computer on the same Wi-Fi network:
+For one-time local testing, you can serve the folder from a computer on the same Wi-Fi network:
 
 1. Start the local web server on the computer with `python3 serve.py`.
 2. Use the iPad URL printed by the server.

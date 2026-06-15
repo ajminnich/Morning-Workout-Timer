@@ -2,6 +2,8 @@
   'use strict';
 
   const STORE_KEY = 'core-pushup-timer.device-defaults.v1';
+  const ALERT_SOUND_SRC = 'assets/alpine-ski-clock-clean.m4a';
+  const BEEP_SOUND_SRC = 'assets/alpine-ski-beep-clean.m4a';
 
   const DEFAULT_WORKOUTS = [
     'Front plank',
@@ -12,7 +14,7 @@
     'Hip raises',
     'Reverse crunch',
     'Boat hold',
-    'Chair sit-ups',
+    'Chair sit ups',
     'Spider'
   ];
 
@@ -73,6 +75,9 @@
   let runToken = 0;
   let lastCountdownSecond = null;
   let audioCtx = null;
+  let alertSoundBuffer = null;
+  let beepSoundBuffer = null;
+  let audioAssetsPromise = null;
   let wakeLock = null;
   let configSourceLabel = 'Built-in defaults';
 
@@ -375,7 +380,7 @@
         duration: config.mainSeconds
       });
       intervals.push({
-        label: 'Push-ups',
+        label: 'Push ups',
         type: 'pushups',
         round: i + 1,
         duration: config.pushupSeconds
@@ -568,13 +573,13 @@
       els.phasePill.className = 'phase-pill ready';
       els.roundText.textContent = `Round 1 of ${config.reps}`;
       els.activeName.textContent = intervals[0] ? intervals[0].label : 'Front plank';
-      els.nextName.textContent = intervals[1] ? `Next: ${intervals[1].label}` : 'Next: Push-ups';
+      els.nextName.textContent = intervals[1] ? `Next: ${intervals[1].label}` : 'Next: Push ups';
     } else if (state === 'cue') {
       els.phasePill.textContent = 'Get ready';
       els.phasePill.className = 'phase-pill cue';
       els.roundText.textContent = `Round ${currentInterval.round} of ${config.reps}`;
       els.activeName.textContent = currentInterval.label;
-      els.nextName.textContent = currentInterval.type === 'pushups' ? 'Push-up set' : 'Core set';
+      els.nextName.textContent = currentInterval.type === 'pushups' ? 'Push up set' : 'Core set';
     } else if (state === 'prep') {
       els.phasePill.textContent = 'Prep';
       els.phasePill.className = 'phase-pill cue';
@@ -582,7 +587,7 @@
       els.activeName.textContent = 'Get ready';
       els.nextName.textContent = intervals[0] ? `Next: ${intervals[0].label}` : '';
     } else if (state === 'running') {
-      els.phasePill.textContent = currentInterval.type === 'pushups' ? 'Push-ups' : 'Core';
+      els.phasePill.textContent = currentInterval.type === 'pushups' ? 'Push ups' : 'Core';
       els.phasePill.className = `phase-pill ${currentInterval.type}`;
       els.roundText.textContent = `Round ${currentInterval.round} of ${config.reps}`;
       els.activeName.textContent = currentInterval.label;
@@ -642,7 +647,7 @@
       title.className = 'schedule-item-title';
       meta.className = 'schedule-item-meta';
       title.textContent = workouts[i % workouts.length];
-      meta.textContent = `${formatDurationForInput(config.mainSeconds)} core, then ${formatDurationForInput(config.pushupSeconds)} push-ups`;
+      meta.textContent = `${formatDurationForInput(config.mainSeconds)} core, then ${formatDurationForInput(config.pushupSeconds)} push ups`;
       div.append(title, meta);
       li.appendChild(div);
       els.scheduleList.appendChild(li);
@@ -667,13 +672,95 @@
       if (!Ctx) return;
       if (!audioCtx) audioCtx = new Ctx();
       if (audioCtx.state === 'suspended') await audioCtx.resume();
+      await loadAudioAssets();
     } catch (error) {
       console.warn('Audio could not be started:', error);
     }
   }
 
+  function loadAudioAssets() {
+    if (!audioCtx) return Promise.resolve();
+    if (audioAssetsPromise) return audioAssetsPromise;
+
+    audioAssetsPromise = Promise.allSettled([
+      loadAudioBuffer(ALERT_SOUND_SRC),
+      loadAudioBuffer(BEEP_SOUND_SRC)
+    ]).then((results) => {
+      if (results[0].status === 'fulfilled') alertSoundBuffer = results[0].value;
+      if (results[1].status === 'fulfilled') beepSoundBuffer = results[1].value;
+      if (!alertSoundBuffer && !beepSoundBuffer) {
+        throw new Error('No audio files could be loaded.');
+      }
+    }).catch((error) => {
+      audioAssetsPromise = null;
+      throw error;
+    });
+
+    return audioAssetsPromise;
+  }
+
+  async function loadAudioBuffer(src) {
+    const response = await fetch(src, { cache: 'force-cache' });
+    if (!response.ok) throw new Error(`${src} returned ${response.status}`);
+    const arrayBuffer = await response.arrayBuffer();
+    return audioCtx.decodeAudioData(arrayBuffer);
+  }
+
   function playAlpineAlert(kind) {
     if (!config.sound) return;
+
+    const playUploaded = () => {
+      const buffer = kind === 'complete' ? (alertSoundBuffer || beepSoundBuffer) : (beepSoundBuffer || alertSoundBuffer);
+      if (!buffer) return false;
+      playAudioBuffer(buffer, kind === 'complete' ? 0.82 : 0.74);
+      vibrate(kind === 'complete' ? [80, 60, 120] : [45]);
+      return true;
+    };
+
+    try {
+      if (audioCtx && playUploaded()) return;
+      unlockAudio().then(() => {
+        if (!playUploaded()) playGeneratedAlpineAlert(kind);
+      }).catch(() => playGeneratedAlpineAlert(kind));
+    } catch (error) {
+      console.warn('Alert sound failed:', error);
+      playGeneratedAlpineAlert(kind);
+    }
+  }
+
+  function playCountdownBeep(seconds) {
+    if (!config.sound) return;
+
+    const playUploaded = () => {
+      const buffer = beepSoundBuffer || alertSoundBuffer;
+      if (!buffer) return false;
+      playAudioBuffer(buffer, seconds === 1 ? 0.82 : 0.7);
+      vibrate(25);
+      return true;
+    };
+
+    try {
+      if (audioCtx && playUploaded()) return;
+      unlockAudio().then(() => {
+        if (!playUploaded()) playGeneratedCountdownBeep(seconds);
+      }).catch(() => playGeneratedCountdownBeep(seconds));
+    } catch (error) {
+      console.warn('Countdown sound failed:', error);
+      playGeneratedCountdownBeep(seconds);
+    }
+  }
+
+  function playAudioBuffer(buffer, volume) {
+    if (!audioCtx || !buffer) return;
+    const source = audioCtx.createBufferSource();
+    const gain = audioCtx.createGain();
+    source.buffer = buffer;
+    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    source.connect(gain).connect(audioCtx.destination);
+    source.start(audioCtx.currentTime);
+  }
+
+  function playGeneratedAlpineAlert(kind) {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
@@ -690,11 +777,11 @@
       });
       vibrate(kind === 'complete' ? [80, 60, 120] : [45]);
     } catch (error) {
-      console.warn('Alert sound failed:', error);
+      console.warn('Generated alert sound failed:', error);
     }
   }
 
-  function playCountdownBeep(seconds) {
+  function playGeneratedCountdownBeep(seconds) {
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
@@ -703,7 +790,7 @@
       scheduleTone(base, audioCtx.currentTime + 0.01, 0.075, 'square', 0.11);
       vibrate(25);
     } catch (error) {
-      console.warn('Countdown sound failed:', error);
+      console.warn('Generated countdown sound failed:', error);
     }
   }
 
@@ -811,7 +898,7 @@
 
   function serializeTimerConfig(input) {
     return [
-      '# Core + Push-up Timer defaults',
+      '# Core + Push Up Timer defaults',
       '# Edit this file, then reload the web app.',
       `reps=${input.reps}`,
       `main_set=${formatDurationForInput(input.mainSeconds)}`,
