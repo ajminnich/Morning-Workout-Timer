@@ -1,0 +1,12 @@
+# Core + Push-up Timer defaults
+# Edit this file, then reload the web app.
+# Durations may be seconds, m:ss, or h:mm:ss.
+
+reps=10
+main_set=1:15
+pushup_set=0:50
+prep=0:00
+alert=alpine-ski
+voice=true
+sound=true
+countdown=true

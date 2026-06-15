@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101827">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Core Timer">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Core + Push-up Tabata Timer</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Core + Push-up workout clock</p>
+        <h1>Interval Timer</h1>
+      </div>
+      <button id="fullscreenBtn" class="ghost-button" type="button" aria-label="Enter full screen">Full Screen</button>
+    </header>
+
+    <main>
+      <section class="timer-card" aria-label="Workout timer">
+        <div class="status-row">
+          <span id="phasePill" class="phase-pill ready">Ready</span>
+          <span id="roundText" class="round-text">Round 1 of 10</span>
+        </div>
+
+        <div class="clock-wrap">
+          <div id="timerDisplay" class="timer-display" aria-live="off">01:15</div>
+          <div id="activeName" class="active-name">Front plank</div>
+          <div id="nextName" class="next-name">Next: Push-ups</div>
+        </div>
+
+        <div class="progress-shell" aria-hidden="true">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+
+        <div id="roundDots" class="round-dots" aria-label="Round progress"></div>
+
+        <div class="controls" aria-label="Timer controls">
+          <button id="startBtn" class="primary-button" type="button">Start</button>
+          <button id="pauseBtn" type="button" disabled>Pause</button>
+          <button id="skipBtn" type="button" disabled>Skip</button>
+          <button id="resetBtn" type="button">Reset</button>
+        </div>
+
+        <div class="quick-settings" aria-label="Audio options">
+          <label class="switch-line">
+            <input id="voiceToggle" type="checkbox" checked>
+            <span>Voice names</span>
+          </label>
+          <label class="switch-line">
+            <input id="soundToggle" type="checkbox" checked>
+            <span>Alpine Ski alert</span>
+          </label>
+          <label class="switch-line">
+            <input id="countdownToggle" type="checkbox" checked>
+            <span>3-second countdown beeps</span>
+          </label>
+        </div>
+      </section>
+
+      <section class="settings-card" aria-label="Workout settings">
+        <div class="settings-header">
+          <div>
+            <p class="eyebrow">Editable defaults</p>
+            <h2>Workout setup</h2>
+          </div>
+          <span id="configSource" class="source-pill">Config files</span>
+        </div>
+
+        <form id="settingsForm" class="settings-grid">
+          <label>
+            Reps / rounds
+            <input id="repsInput" name="reps" type="number" min="1" max="99" inputmode="numeric" value="10">
+          </label>
+          <label>
+            Core set time
+            <input id="mainTimeInput" name="mainTime" type="text" inputmode="numeric" value="1:15" aria-describedby="timeHelp">
+          </label>
+          <label>
+            Push-up set time
+            <input id="pushupTimeInput" name="pushupTime" type="text" inputmode="numeric" value="0:50" aria-describedby="timeHelp">
+          </label>
+          <label>
+            Prep time before workout
+            <input id="prepTimeInput" name="prepTime" type="text" inputmode="numeric" value="0:00" aria-describedby="timeHelp">
+          </label>
+        </form>
+        <p id="timeHelp" class="help-text">Use seconds, m:ss, or h:mm:ss. Example: 75, 1:15, or 0:50.</p>
+
+        <label class="textarea-label">
+          Core workout names, one per line
+          <textarea id="workoutsInput" rows="10" spellcheck="false"></textarea>
+        </label>
+
+        <div class="settings-actions">
+          <button id="applySettingsBtn" class="primary-button" type="button">Apply now</button>
+          <button id="saveDeviceBtn" type="button">Save on this device</button>
+          <button id="clearDeviceBtn" type="button">Clear device save</button>
+        </div>
+
+        <details class="file-tools">
+          <summary>Local text file tools</summary>
+          <div class="file-tool-grid">
+            <label>
+              Load timer.txt
+              <input id="timerFileInput" type="file" accept=".txt,text/plain">
+            </label>
+            <label>
+              Load workouts.txt
+              <input id="workoutsFileInput" type="file" accept=".txt,text/plain">
+            </label>
+          </div>
+          <div class="settings-actions compact">
+            <button id="downloadTimerBtn" type="button">Download timer.txt</button>
+            <button id="downloadWorkoutsBtn" type="button">Download workouts.txt</button>
+          </div>
+          <p class="help-text">The app reads <code>config/timer.txt</code> and <code>config/workouts.txt</code> when served from this folder. Browser security prevents silent access to arbitrary files outside the app folder.</p>
+        </details>
+      </section>
+
+      <section class="schedule-card" aria-label="Workout schedule">
+        <div class="settings-header">
+          <div>
+            <p class="eyebrow">Today</p>
+            <h2>Schedule</h2>
+          </div>
+          <span id="totalTime" class="source-pill">20:50 total</span>
+        </div>
+        <ol id="scheduleList" class="schedule-list"></ol>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
