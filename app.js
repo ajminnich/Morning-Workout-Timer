@@ -2,13 +2,14 @@
   'use strict';
 
   const STORE_KEY = 'core-pushup-timer.device-defaults.v1';
-  const ALERT_SOUND_SRC = 'assets/alpine-ski-clock-clean.m4a';
-  const BEEP_SOUND_SRC = 'assets/alpine-ski-beep-clean.m4a';
-  // The cleaned Alpine Ski clock clip has four beeps: near 0, 1, 2, and 3 seconds.
-  // Arm it early, then start it so the fourth beep lands on the interval change.
-  const ALPINE_COUNTDOWN_FINAL_BEEP_AT_SECONDS = 3.0;
-  const ALPINE_COUNTDOWN_ARM_SECONDS = 4.05;
-  const POST_COUNTDOWN_SPEECH_DELAY_MS = 50; //550
+  const ALERT_SOUND_SRC = 'assets/alpine-ski-clock-full.m4a';
+  // Legacy alias. All alert/countdown sounds now use the full uploaded Alpine Ski Clock clip.
+  const BEEP_SOUND_SRC = ALERT_SOUND_SRC;
+  // The full cleaned clip is a little over five seconds. Starting it early is better
+  // than trimming it, so all four recorded beeps can be heard.
+  const ALPINE_COUNTDOWN_TRACK_SECONDS = 5.35;
+  const ALPINE_COUNTDOWN_ARM_SECONDS = 5.55;
+  const POST_COUNTDOWN_SPEECH_DELAY_MS = 1400;
 
   const DEFAULT_WORKOUTS = [
     'Front plank',
@@ -85,6 +86,8 @@
   let beepSoundBuffer = null;
   let audioAssetsPromise = null;
   let activeAudioSources = new Set();
+  let alertAudioElement = null;
+  let activeMediaElements = new Set();
   let wakeLock = null;
   let configSourceLabel = 'Built-in defaults';
 
@@ -442,7 +445,7 @@
     setState('cue');
     updateTimerDisplay(durationMs, 0);
 
-    if (!countdownTrackJustPlayed) {
+    if (!countdownTrackJustPlayed && !config.countdown) {
       playAlpineAlert('transition');
     }
 
@@ -689,24 +692,32 @@
 
   function maybeCountdownBeep(remainingMs) {
     if (!config.countdown || !config.sound || state !== 'running') return;
-
-    if (!countdownTrackScheduledForEndAt && alertSoundBuffer && durationMs >= 4200 && remainingMs <= ALPINE_COUNTDOWN_ARM_SECONDS * 1000) {
-      if (scheduleAlpineCountdownTrack(remainingMs)) {
-        lastCountdownSecond = 'track';
-        return;
-      }
-    }
-
     if (countdownTrackScheduledForEndAt) return;
 
-    const remainingSeconds = Math.ceil(remainingMs / 1000);
-    if (remainingSeconds > 0 && remainingSeconds <= 3 && remainingSeconds !== lastCountdownSecond) {
-      lastCountdownSecond = remainingSeconds;
-      playCountdownBeep(remainingSeconds);
+    const leadMs = getAlpineTrackLeadMs();
+    if (durationMs >= 1000 && remainingMs <= leadMs) {
+      if (scheduleAlpineCountdownTrack(remainingMs)) {
+        lastCountdownSecond = 'track';
+      }
     }
   }
 
+  function getAlpineTrackLeadMs() {
+    if (alertSoundBuffer && Number.isFinite(alertSoundBuffer.duration) && alertSoundBuffer.duration > 0) {
+      return Math.ceil((alertSoundBuffer.duration + 0.25) * 1000);
+    }
+    return Math.ceil(ALPINE_COUNTDOWN_ARM_SECONDS * 1000);
+  }
+
   async function unlockAudio() {
+    primeAudioElement();
+
+    try {
+      await unlockHtmlAudioElement();
+    } catch (error) {
+      console.info('Media audio will start when the browser allows it:', error.message || error);
+    }
+
     try {
       const Ctx = window.AudioContext || window.webkitAudioContext;
       if (!Ctx) return;
@@ -714,7 +725,9 @@
       if (audioCtx.state === 'suspended') await audioCtx.resume();
       await loadAudioAssets();
     } catch (error) {
-      console.warn('Audio could not be started:', error);
+      // Some local file:// tests cannot fetch/decode local media for Web Audio.
+      // The HTML media element above is the fallback and uses the same uploaded file.
+      console.info('Web Audio decode unavailable; using media audio:', error.message || error);
     }
   }
 
@@ -723,13 +736,13 @@
     if (audioAssetsPromise) return audioAssetsPromise;
 
     audioAssetsPromise = Promise.allSettled([
-      loadAudioBuffer(ALERT_SOUND_SRC),
-      loadAudioBuffer(BEEP_SOUND_SRC)
+      loadAudioBuffer(ALERT_SOUND_SRC)
     ]).then((results) => {
-      if (results[0].status === 'fulfilled') alertSoundBuffer = results[0].value;
-      if (results[1].status === 'fulfilled') beepSoundBuffer = results[1].value;
-      if (!alertSoundBuffer && !beepSoundBuffer) {
-        throw new Error('No audio files could be loaded.');
+      if (results[0].status === 'fulfilled') {
+        alertSoundBuffer = results[0].value;
+        beepSoundBuffer = alertSoundBuffer;
+      } else {
+        console.info('Audio file could not be decoded for Web Audio; media playback will be used instead:', results[0].reason);
       }
     }).catch((error) => {
       audioAssetsPromise = null;
@@ -748,61 +761,39 @@
 
   function playAlpineAlert(kind) {
     if (!config.sound) return;
-
-    const playUploaded = () => {
-      const buffer = kind === 'complete' ? (alertSoundBuffer || beepSoundBuffer) : (beepSoundBuffer || alertSoundBuffer);
-      if (!buffer) return false;
-      playAudioBuffer(buffer, kind === 'complete' ? 0.82 : 0.74);
-      vibrate(kind === 'complete' ? [80, 60, 120] : [45]);
-      return true;
-    };
-
-    try {
-      if (audioCtx && playUploaded()) return;
-      unlockAudio().then(() => {
-        if (!playUploaded()) playGeneratedAlpineAlert(kind);
-      }).catch(() => playGeneratedAlpineAlert(kind));
-    } catch (error) {
-      console.warn('Alert sound failed:', error);
-      playGeneratedAlpineAlert(kind);
-    }
+    playFullAlpineTrack(kind);
+    vibrate(kind === 'complete' ? [80, 60, 120] : [45]);
   }
 
   function scheduleAlpineCountdownTrack(remainingMs) {
-    if (!config.sound || !audioCtx || !alertSoundBuffer) return false;
+    if (!config.sound) return false;
 
+    let played = false;
     const secondsUntilEnd = Math.max(0, remainingMs / 1000);
-    const scheduledStartTime = audioCtx.currentTime + Math.max(0, secondsUntilEnd - ALPINE_COUNTDOWN_FINAL_BEEP_AT_SECONDS);
-    playAudioBuffer(alertSoundBuffer, 0.82, scheduledStartTime);
-    countdownTrackScheduledForEndAt = endAt;
+
+    if (audioCtx && alertSoundBuffer) {
+      const trackSeconds = alertSoundBuffer.duration || ALPINE_COUNTDOWN_TRACK_SECONDS;
+      const scheduledStartTime = audioCtx.currentTime + Math.max(0, secondsUntilEnd - trackSeconds);
+      playAudioBuffer(alertSoundBuffer, 0.86, scheduledStartTime);
+      played = true;
+    } else {
+      played = playFullAlpineTrack('countdown');
+    }
+
+    if (!played) return false;
+    countdownTrackScheduledForEndAt = endAt || (performance.now() + remainingMs);
     vibrate([25, 975, 25, 975, 25, 975, 90]);
     return true;
   }
 
   function playCountdownBeep(seconds) {
     if (!config.sound) return;
-
-    const playUploaded = () => {
-      const buffer = beepSoundBuffer || alertSoundBuffer;
-      if (!buffer) return false;
-      playAudioBuffer(buffer, seconds === 1 ? 0.82 : 0.7);
-      vibrate(25);
-      return true;
-    };
-
-    try {
-      if (audioCtx && playUploaded()) return;
-      unlockAudio().then(() => {
-        if (!playUploaded()) playGeneratedCountdownBeep(seconds);
-      }).catch(() => playGeneratedCountdownBeep(seconds));
-    } catch (error) {
-      console.warn('Countdown sound failed:', error);
-      playGeneratedCountdownBeep(seconds);
-    }
+    playFullAlpineTrack('countdown');
+    vibrate(seconds === 1 ? [90] : [25]);
   }
 
   function playAudioBuffer(buffer, volume, when = null) {
-    if (!audioCtx || !buffer) return;
+    if (!audioCtx || !buffer) return false;
     const source = audioCtx.createBufferSource();
     const gain = audioCtx.createGain();
     const startTime = Math.max(audioCtx.currentTime + 0.003, when ?? audioCtx.currentTime);
@@ -812,6 +803,7 @@
     activeAudioSources.add(source);
     source.onended = () => activeAudioSources.delete(source);
     source.start(startTime);
+    return true;
   }
 
   function stopActiveAudio() {
@@ -823,6 +815,88 @@
       }
     });
     activeAudioSources.clear();
+
+    activeMediaElements.forEach((media) => {
+      try {
+        media.pause();
+        media.currentTime = 0;
+      } catch (error) {
+        // Media element may not be seekable yet.
+      }
+    });
+    activeMediaElements.clear();
+  }
+
+  function primeAudioElement() {
+    if (!alertAudioElement) {
+      alertAudioElement = new Audio(ALERT_SOUND_SRC);
+      alertAudioElement.preload = 'auto';
+      alertAudioElement.setAttribute('playsinline', '');
+      try {
+        alertAudioElement.load();
+      } catch (error) {
+        // Some browsers defer loading until play().
+      }
+    }
+    return alertAudioElement;
+  }
+
+  async function unlockHtmlAudioElement() {
+    const audio = primeAudioElement();
+    if (!audio) return;
+
+    const oldMuted = audio.muted;
+    const oldVolume = audio.volume;
+    audio.muted = true;
+    try {
+      audio.volume = 0;
+    } catch (error) {
+      // iOS may ignore programmatic volume changes.
+    }
+
+    try {
+      const result = audio.play();
+      if (result && typeof result.then === 'function') await result;
+      audio.pause();
+      audio.currentTime = 0;
+    } finally {
+      audio.muted = oldMuted;
+      try {
+        audio.volume = oldVolume || 1;
+      } catch (error) {
+        // iOS may ignore programmatic volume changes.
+      }
+    }
+  }
+
+  function playFullAlpineTrack(kind) {
+    const audio = primeAudioElement();
+    if (!audio) return false;
+
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      try {
+        audio.volume = kind === 'countdown' || kind === 'complete' ? 0.88 : 0.74;
+      } catch (error) {
+        // iOS may ignore programmatic volume changes.
+      }
+      activeMediaElements.add(audio);
+      audio.onended = () => activeMediaElements.delete(audio);
+      const result = audio.play();
+      if (result && typeof result.catch === 'function') {
+        result.catch((error) => {
+          activeMediaElements.delete(audio);
+          console.info('Audio file could not play:', error.message || error);
+        });
+      }
+      return true;
+    } catch (error) {
+      activeMediaElements.delete(audio);
+      console.info('Audio file could not start:', error.message || error);
+      return false;
+    }
   }
 
   function playGeneratedAlpineAlert(kind) {

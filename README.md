@@ -24,8 +24,7 @@ core-pushup-timer/
     icon.svg
     icon-192.png
     icon-512.png
-    alpine-ski-beep-clean.m4a
-    alpine-ski-clock-clean.m4a
+    alpine-ski-clock-full.m4a
 ```
 
 ## Edit the safe local text files
