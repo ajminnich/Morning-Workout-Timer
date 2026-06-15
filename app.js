@@ -4,6 +4,11 @@
   const STORE_KEY = 'core-pushup-timer.device-defaults.v1';
   const ALERT_SOUND_SRC = 'assets/alpine-ski-clock-clean.m4a';
   const BEEP_SOUND_SRC = 'assets/alpine-ski-beep-clean.m4a';
+  // The cleaned Alpine Ski clock clip has four beeps: near 0, 1, 2, and 3 seconds.
+  // Arm it early, then start it so the fourth beep lands on the interval change.
+  const ALPINE_COUNTDOWN_FINAL_BEEP_AT_SECONDS = 3.0;
+  const ALPINE_COUNTDOWN_ARM_SECONDS = 4.05;
+  const POST_COUNTDOWN_SPEECH_DELAY_MS = 550;
 
   const DEFAULT_WORKOUTS = [
     'Front plank',
@@ -74,10 +79,12 @@
   let rafId = 0;
   let runToken = 0;
   let lastCountdownSecond = null;
+  let countdownTrackScheduledForEndAt = 0;
   let audioCtx = null;
   let alertSoundBuffer = null;
   let beepSoundBuffer = null;
   let audioAssetsPromise = null;
+  let activeAudioSources = new Set();
   let wakeLock = null;
   let configSourceLabel = 'Built-in defaults';
 
@@ -398,6 +405,8 @@
     activeIndex = 0;
     pausedRemainingMs = 0;
     lastCountdownSecond = null;
+    countdownTrackScheduledForEndAt = 0;
+    stopActiveAudio();
     await unlockAudio();
     requestWakeLock();
 
@@ -418,8 +427,11 @@
 
   function cueInterval(index, token) {
     if (token !== runToken) return;
+    const countdownTrackJustPlayed = Boolean(countdownTrackScheduledForEndAt);
+    countdownTrackScheduledForEndAt = 0;
+
     if (index >= intervals.length) {
-      completeWorkout();
+      completeWorkout(countdownTrackJustPlayed);
       return;
     }
 
@@ -429,9 +441,12 @@
     lastCountdownSecond = null;
     setState('cue');
     updateTimerDisplay(durationMs, 0);
-    playAlpineAlert('transition');
 
-    speak(currentInterval.label).then(() => {
+    if (!countdownTrackJustPlayed) {
+      playAlpineAlert('transition');
+    }
+
+    delay(countdownTrackJustPlayed ? POST_COUNTDOWN_SPEECH_DELAY_MS : 0).then(() => speak(currentInterval.label)).then(() => {
       if (token !== runToken || state !== 'cue') return;
       startTimedInterval(currentInterval, () => cueInterval(index + 1, token));
     });
@@ -441,6 +456,8 @@
     currentInterval = interval;
     durationMs = interval.duration * 1000;
     endAt = performance.now() + durationMs;
+    lastCountdownSecond = null;
+    countdownTrackScheduledForEndAt = 0;
     setState(interval.type === 'prep' ? 'prep' : 'running');
     updateTimerDisplay(durationMs, 0);
     cancelAnimationFrame(rafId);
@@ -469,6 +486,9 @@
       pausedRemainingMs = Math.max(0, endAt - performance.now());
       cancelAnimationFrame(rafId);
       rafId = 0;
+      stopActiveAudio();
+      countdownTrackScheduledForEndAt = 0;
+      lastCountdownSecond = null;
       setState('paused');
       releaseWakeLock();
       return;
@@ -476,6 +496,8 @@
 
     if (state === 'paused' && currentInterval) {
       endAt = performance.now() + pausedRemainingMs;
+      countdownTrackScheduledForEndAt = 0;
+      lastCountdownSecond = null;
       setState(currentInterval.type === 'prep' ? 'prep' : 'running');
       requestWakeLock();
       startTimedIntervalFromPause();
@@ -514,6 +536,9 @@
     const token = runToken;
     cancelAnimationFrame(rafId);
     window.speechSynthesis && window.speechSynthesis.cancel();
+    stopActiveAudio();
+    countdownTrackScheduledForEndAt = 0;
+    lastCountdownSecond = null;
 
     if (currentInterval && currentInterval.type === 'prep') {
       cueInterval(0, token);
@@ -529,6 +554,7 @@
     cancelAnimationFrame(rafId);
     rafId = 0;
     if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+    stopActiveAudio();
     releaseWakeLock();
     state = 'ready';
     activeIndex = 0;
@@ -536,12 +562,13 @@
     pausedRemainingMs = 0;
     durationMs = currentInterval ? currentInterval.duration * 1000 : config.mainSeconds * 1000;
     lastCountdownSecond = null;
+    countdownTrackScheduledForEndAt = 0;
     setState('ready');
     updateTimerDisplay(durationMs, 0);
     if (announce) playAlpineAlert('reset');
   }
 
-  function completeWorkout() {
+  function completeWorkout(countdownTrackJustPlayed = Boolean(countdownTrackScheduledForEndAt)) {
     cancelAnimationFrame(rafId);
     rafId = 0;
     state = 'done';
@@ -553,8 +580,11 @@
     els.nextName.textContent = 'Nice work.';
     els.progressBar.style.width = '100%';
     renderRoundDots(true);
-    playAlpineAlert('complete');
-    speak('Workout complete');
+    countdownTrackScheduledForEndAt = 0;
+    if (!countdownTrackJustPlayed) {
+      playAlpineAlert('complete');
+    }
+    delay(countdownTrackJustPlayed ? POST_COUNTDOWN_SPEECH_DELAY_MS : 0).then(() => speak('Workout complete'));
   }
 
   function setState(nextState) {
@@ -659,6 +689,16 @@
 
   function maybeCountdownBeep(remainingMs) {
     if (!config.countdown || !config.sound || state !== 'running') return;
+
+    if (!countdownTrackScheduledForEndAt && alertSoundBuffer && durationMs >= 4200 && remainingMs <= ALPINE_COUNTDOWN_ARM_SECONDS * 1000) {
+      if (scheduleAlpineCountdownTrack(remainingMs)) {
+        lastCountdownSecond = 'track';
+        return;
+      }
+    }
+
+    if (countdownTrackScheduledForEndAt) return;
+
     const remainingSeconds = Math.ceil(remainingMs / 1000);
     if (remainingSeconds > 0 && remainingSeconds <= 3 && remainingSeconds !== lastCountdownSecond) {
       lastCountdownSecond = remainingSeconds;
@@ -728,6 +768,17 @@
     }
   }
 
+  function scheduleAlpineCountdownTrack(remainingMs) {
+    if (!config.sound || !audioCtx || !alertSoundBuffer) return false;
+
+    const secondsUntilEnd = Math.max(0, remainingMs / 1000);
+    const scheduledStartTime = audioCtx.currentTime + Math.max(0, secondsUntilEnd - ALPINE_COUNTDOWN_FINAL_BEEP_AT_SECONDS);
+    playAudioBuffer(alertSoundBuffer, 0.82, scheduledStartTime);
+    countdownTrackScheduledForEndAt = endAt;
+    vibrate([25, 975, 25, 975, 25, 975, 90]);
+    return true;
+  }
+
   function playCountdownBeep(seconds) {
     if (!config.sound) return;
 
@@ -750,14 +801,28 @@
     }
   }
 
-  function playAudioBuffer(buffer, volume) {
+  function playAudioBuffer(buffer, volume, when = null) {
     if (!audioCtx || !buffer) return;
     const source = audioCtx.createBufferSource();
     const gain = audioCtx.createGain();
+    const startTime = Math.max(audioCtx.currentTime + 0.003, when ?? audioCtx.currentTime);
     source.buffer = buffer;
-    gain.gain.setValueAtTime(volume, audioCtx.currentTime);
+    gain.gain.setValueAtTime(volume, startTime);
     source.connect(gain).connect(audioCtx.destination);
-    source.start(audioCtx.currentTime);
+    activeAudioSources.add(source);
+    source.onended = () => activeAudioSources.delete(source);
+    source.start(startTime);
+  }
+
+  function stopActiveAudio() {
+    activeAudioSources.forEach((source) => {
+      try {
+        source.stop(0);
+      } catch (error) {
+        // Source already stopped.
+      }
+    });
+    activeAudioSources.clear();
   }
 
   function playGeneratedAlpineAlert(kind) {
