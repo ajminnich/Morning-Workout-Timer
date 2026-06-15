@@ -5,7 +5,20 @@ This is a self-contained web app for an interval workout that alternates:
 1. One core exercise
 2. One push up interval
 
-The default workout has 10 rounds, a 1:15 core interval, and a 0:50 push up interval. Before each interval, the app speaks the exercise name. Push up intervals are announced as "Push ups". The beep/alert sound uses the cleaned Alpine Ski Clock audio provided for this version. The audio was noise-reduced, trimmed, and reassembled so the beeps land on whole-second marks.
+The default workout has 10 rounds, a 1:15 core interval, and a 0:50 push up interval. Before each interval, the app announces the exercise name. Push up intervals are announced as "Push ups". The beep/alert sound uses the cleaned Alpine Ski Clock audio provided for this version.
+
+## Important iPad audio note
+
+This version avoids relying only on browser text-to-speech. The default workout names are bundled as recorded audio files in `assets/voice/`, and the Alpine Ski alert is bundled as MP3, M4A, and WAV.
+
+On iPad, tap **Enable / Test Sound + Voice** once before starting. The button plays a recorded voice cue and the full Alpine Ski Clock sound so Safari/Chrome can unlock the audio route from a real tap.
+
+If the timer appears to trigger sound but you hear nothing, check:
+
+- iPad volume buttons
+- Control Center output route, such as Bluetooth headphones or AirPlay
+- Silent/Focus modes
+- Whether the site was refreshed after uploading the newest files
 
 ## Files
 
@@ -24,7 +37,24 @@ core-pushup-timer/
     icon.svg
     icon-192.png
     icon-512.png
+    alpine-ski-clock-full.mp3
     alpine-ski-clock-full.m4a
+    alpine-ski-clock-full.wav
+    voice/
+      front-plank.wav
+      abs-brace.wav
+      hand-slides.wav
+      alternating-crunch.wav
+      hand-to-heel.wav
+      hip-raises.wav
+      reverse-crunch.wav
+      boat-hold.wav
+      chair-sit-ups.wav
+      spider.wav
+      push-ups.wav
+      get-ready.wav
+      workout-complete.wav
+      sound-ready.wav
 ```
 
 ## Edit the safe local text files
@@ -70,15 +100,18 @@ http://localhost:8000
 
 ## Run on iPad or iPhone
 
-For one-time local testing, you can serve the folder from a computer on the same Wi-Fi network:
+For everyday iPad use, host it with GitHub Pages and add it to the Home Screen.
 
-1. Start the local web server on the computer with `python3 serve.py`.
-2. Use the iPad URL printed by the server.
-3. On the iPad, open Safari to `http://YOUR-COMPUTER-IP:8000`.
-4. Tap Share, then Add to Home Screen.
-5. Tap Start once while the iPad is unlocked so Safari permits the voice and audio cues.
+After updating GitHub Pages:
 
-After the first load, the app can cache itself for offline use. If you edit `config/timer.txt` or `config/workouts.txt`, reload the page while connected to the server so the latest config files are loaded.
+1. Open the site in Safari while online.
+2. Refresh once.
+3. Tap **Enable / Test Sound + Voice**.
+4. Confirm you hear both the voice and Alpine sound.
+5. Tap **Start**.
+6. Add it to the Home Screen after the new version is working.
+
+After the first successful online load, the service worker caches the app for offline use. If you edit `config/timer.txt` or `config/workouts.txt`, reload the page while online so the latest files are loaded.
 
 ## In-app edits
 
@@ -91,6 +124,9 @@ The app also has an editor panel. Use:
 
 ## Notes
 
-- Browser audio and text-to-speech on iPad require a user gesture, so the sound and voice start after tapping Start.
+- Default voice names are recorded audio files. If you change workout names to something not in the bundled voice list, the app will try browser text-to-speech as a fallback.
 - The app asks for screen wake lock when the browser supports it. If the device still sleeps, change the iPad Auto-Lock setting while working out.
 - The Full Screen button uses browser full-screen support when available. On iPhone, iOS may limit full-screen behavior, but the layout remains mobile-friendly.
+
+
+Audio update: the Alpine countdown uses the cropped, noise-reduced file in `assets/alpine-ski-clock-full.*`.

@@ -62,6 +62,13 @@
             <input id="countdownToggle" type="checkbox" checked>
             <span>Full Alpine countdown</span>
           </label>
+          <button id="testSoundBtn" class="sound-test-button" type="button">Enable / Test Sound + Voice</button>
+          <p id="soundStatus" class="sound-status" aria-live="polite">Sound: ready to enable</p>
+          <audio id="alertAudio" preload="auto" playsinline>
+            <source src="assets/alpine-ski-clock-full.mp3" type="audio/mpeg">
+            <source src="assets/alpine-ski-clock-full.m4a" type="audio/mp4">
+            <source src="assets/alpine-ski-clock-full.wav" type="audio/wav">
+          </audio>
         </div>
       </section>
 

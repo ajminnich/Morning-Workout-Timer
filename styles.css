@@ -552,3 +552,27 @@ body.fullscreen-ui .timer-card,
 :fullscreen .timer-card {
   min-height: calc(100svh - 2rem);
 }
+
+.sound-test-button {
+  grid-column: 1 / -1;
+  min-height: 44px;
+}
+
+.sound-status {
+  grid-column: 1 / -1;
+  margin: -0.2rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.sound-status.ready {
+  color: #d5ffe1;
+}
+
+.sound-status.warning {
+  color: #ffdfb0;
+}
+
+.sound-status.error {
+  color: #ffb4b4;
+}
